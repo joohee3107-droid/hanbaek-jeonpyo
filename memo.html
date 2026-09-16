@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>공유 메모장 (DB 연습)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { background: #1f2937; color: #fff; padding: 16px 24px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; font-size: 12px; color: #9ca3af; }
+  main { max-width: 620px; margin: 24px auto; padding: 0 16px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .hint { font-size: 12px; color: #6b7280; margin: 4px 0 14px; }
+  .warn { font-size: 12px; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; }
+  input, textarea, button { font-family: inherit; font-size: 14px; }
+  input, textarea { width: 100%; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 6px; margin-bottom: 8px; }
+  textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  button { padding: 9px 16px; border: none; border-radius: 6px; cursor: pointer; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-ghost { background: #eef2ff; color: #3730a3; }
+  #status { font-size: 12px; color: #6b7280; }
+  ul.memos { list-style: none; padding: 0; margin: 0; }
+  ul.memos li { border-bottom: 1px solid #f0f0f0; padding: 12px 4px; }
+  ul.memos li:last-child { border-bottom: none; }
+  .memo-content { font-size: 15px; white-space: pre-wrap; word-break: break-word; }
+  .memo-meta { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+  #errorBox { color: #991b1b; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>공유 메모장 <span style="font-size:12px;color:#9ca3af;">DB 연습</span></h1>
+  <p>여기 쓴 글은 DB(Supabase)에 저장돼서, 다른 PC·다른 사람 화면에도 똑같이 보여요.</p>
+</header>
+<main>
+  <div class="warn">⚠️ 연습용이에요. 진짜 회사 자료는 넣지 말고 "안녕", "테스트" 같은 아무 글자만 넣어주세요.</div>
+
+  <div id="errorBox"></div>
+
+  <div class="card">
+    <input type="text" id="author" placeholder="이름 (예: 주희)" maxlength="20">
+    <textarea id="content" placeholder="메모 내용을 적어보세요"></textarea>
+    <div class="row">
+      <button class="btn-primary" id="saveBtn">저장</button>
+      <button class="btn-ghost" id="refreshBtn">새로고침</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="hint">최근에 쓴 것부터 보여요. 몇 초마다 자동으로 새로고침돼서, 다른 사람이 쓰면 여기 나타나요.</div>
+    <ul class="memos" id="memoList"></ul>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ===== DB 연결 정보 (공개용 키라 코드에 넣어도 안전) =====
+  const SUPABASE_URL = 'https://uqxkkkxkilikzniyzdkz.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_FZ62OZ4KKpc16xXWga1tKA_9UUv6G5-';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const $ = (id) => document.getElementById(id);
+  function showError(msg) {
+    const box = $('errorBox');
+    if (msg) { box.textContent = '오류: ' + msg; box.style.display = 'block'; }
+    else { box.style.display = 'none'; }
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function fmtTime(iso) {
+    try { return new Date(iso).toLocaleString('ko-KR'); } catch (e) { return iso || ''; }
+  }
+
+  async function loadMemos() {
+    const { data, error } = await sb.from('memos').select('*').order('created_at', { ascending: false });
+    if (error) { showError(error.message); return; }
+    showError('');
+    $('memoList').innerHTML = (data && data.length)
+      ? data.map((m) =>
+          `<li><div class="memo-content">${escapeHtml(m.content)}</div>` +
+          `<div class="memo-meta">${escapeHtml(m.author) || '익명'} · ${fmtTime(m.created_at)}</div></li>`
+        ).join('')
+      : '<li class="hint">아직 메모가 없어요. 위에서 첫 메모를 남겨보세요.</li>';
+  }
+
+  async function addMemo() {
+    const content = $('content').value.trim();
+    const author = $('author').value.trim();
+    if (!content) { $('content').focus(); return; }
+    $('status').textContent = '저장 중...';
+    const { error } = await sb.from('memos').insert({ content, author });
+    if (error) { $('status').textContent = ''; showError('저장 실패: ' + error.message); return; }
+    $('content').value = '';
+    $('status').textContent = '저장됨 ✓';
+    setTimeout(() => { $('status').textContent = ''; }, 1500);
+    await loadMemos();
+  }
+
+  $('saveBtn').onclick = addMemo;
+  $('refreshBtn').onclick = loadMemos;
+  loadMemos();
+  // 몇 초마다 자동으로 다시 불러와서, 다른 사람이 쓴 것도 보이게 한다.
+  setInterval(loadMemos, 4000);
+</script>
+</body>
+</html>
