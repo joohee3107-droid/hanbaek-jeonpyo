@@ -1,5 +1,19 @@
 // 자동이체 자동전표 모듈
 const SPREADSHEET_ID = '1skfIKgMzy1vf5yMuTbgA0acwPUE0pQCTu0ha43bv7_I';
+// ===== Supabase(DB) 연결 — 자동이체 리스트를 공용 DB에 저장/공유 =====
+const _DB_URL = 'https://uqxkkkxkilikzniyzdkz.supabase.co';
+const _DB_KEY = 'sb_publishable_FZ62OZ4KKpc16xXWga1tKA_9UUv6G5-';
+const _dbClient = (window.supabase && window.supabase.createClient) ? window.supabase.createClient(_DB_URL, _DB_KEY) : null;
+async function _fetchRecurringFromDB() {
+  if (!_dbClient) return [];
+  const { data, error } = await _dbClient.from('recurring_items').select('data').order('created_at', { ascending: true });
+  if (error) { console.error('DB 불러오기 실패', error); return (typeof state !== 'undefined' ? state.transfers : []) || []; }
+  return (data || []).map((r) => r.data);
+}
+async function _refreshRecurringFromDB() {
+  state.transfers = await _fetchRecurringFromDB();
+  if (typeof render === 'function') render();
+}
 // 통장내역도 자동이체 리스트와 마찬가지로 자동으로 안 가져온다. 회사를 연결해달라고
 // 요청하면 그때 { '회사명': '시트 탭 이름' } 형태로 여기에 등록한다.
 const BANK_SHEET_NAMES = {};
@@ -96,23 +110,21 @@ function makeItemId() {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 }
 function addRecurringItem(item) {
-  const items = loadRecurringItems();
-  items.push({ id: makeItemId(), ...item });
-  saveRecurringItems(items);
-  state.transfers = items;
+  const withId = { id: makeItemId(), ...item };
+  state.transfers = [...state.transfers, withId];
   render();
+  if (_dbClient) _dbClient.from('recurring_items').insert({ data: withId }).then(({ error }) => { if (error) alert('DB 저장 실패: ' + error.message); });
 }
 function deleteRecurringItem(id) {
-  const items = loadRecurringItems().filter((it) => it.id !== id);
-  saveRecurringItems(items);
-  state.transfers = items;
+  state.transfers = state.transfers.filter((it) => it.id !== id);
   render();
+  if (_dbClient) _dbClient.from('recurring_items').delete().eq('data->>id', id).then(({ error }) => { if (error) alert('DB 삭제 실패: ' + error.message); });
 }
 function updateRecurringItem(id, updates) {
-  const items = loadRecurringItems().map((it) => (it.id === id ? { ...it, ...updates } : it));
-  saveRecurringItems(items);
-  state.transfers = items;
+  let merged = null;
+  state.transfers = state.transfers.map((it) => { if (it.id === id) { merged = { ...it, ...updates }; return merged; } return it; });
   render();
+  if (_dbClient && merged) _dbClient.from('recurring_items').update({ data: merged }).eq('data->>id', id).then(({ error }) => { if (error) alert('DB 수정 실패: ' + error.message); });
 }
 // 통장내역도 구글시트에서 자동으로 가져오지 않고, 사용자가 화면에서 직접 추가한 것만 쓴다.
 const BANK_ROWS_STORAGE_KEY = 'autoTransferBankRows';
@@ -938,8 +950,8 @@ async function loadAll() {
       state.bankRowsByCompany[c] = parseBankRows(tableToRows(bankTables[i]), c);
     });
 
-    // 자동이체 리스트는 구글시트에서 자동으로 가져오지 않고, localStorage에 저장된 것만 쓴다.
-    state.transfers = loadRecurringItems();
+    // 자동이체 리스트는 공용 DB(recurring_items)에서 불러온다.
+    state.transfers = await _fetchRecurringFromDB();
     state.hasLoaded = true;
 
     document.getElementById('loading').style.display = 'none';
@@ -1143,7 +1155,7 @@ function seedHanbaekEncItems() {
 
 function initAutoTransferModule() {
   seedHanbaekEncItems();
-  state.transfers = loadRecurringItems();
+  state.transfers = [];
   document.getElementById('refreshBtn').onclick = loadAll;
 
   const MONTH_SELECT_OPTIONS =
@@ -1238,6 +1250,7 @@ function initAutoTransferModule() {
 }
 
 initAutoTransferModule();
+_refreshRecurringFromDB();
 
 // ===== 데이터 백업 / 복원 (다른 주소로 데이터 옮기기) =====
 // 이 브라우저(localStorage)에 저장된 자동전표 데이터를 파일로 내려받거나(백업),
