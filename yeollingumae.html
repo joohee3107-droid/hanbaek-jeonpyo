@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>열린구매 자동전표</title>
+<link rel="stylesheet" href="style.css?v=2026091600">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>열린구매 자동전표</h1>
+  <p><a href="index.html" style="color:#9ca3af;">← 전표 목록으로</a> · 자금집행 엑셀을 올리면 자금전표를 만들어줍니다.</p>
+</header>
+<main>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>메뉴</h2>
+      <div class="company-tabs" id="navTabs">
+        <div class="company-tab active" data-view="upload">엑셀 업로드</div>
+        <div class="company-tab" data-view="list">자금집행 목록</div>
+        <div class="company-tab" data-view="result">자금집행 결과</div>
+        <div class="company-tab" data-view="voucher">자금전표</div>
+      </div>
+    </aside>
+
+    <div class="content">
+      <div id="errorBox"></div>
+
+      <!-- 1. 엑셀 업로드 -->
+      <div id="panel-upload" class="data-panel">
+        <h2>엑셀 업로드</h2>
+        <p class="hint">
+          열린구매/재무포탈에서 내려받은 자금집행 엑셀 파일을 올려주세요.
+          올린 데이터는 이 브라우저에만 저장됩니다(localStorage).
+        </p>
+        <div class="recurring-form" style="flex-wrap:wrap;">
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+          <button class="btn secondary" id="resetBtn">전체 삭제</button>
+        </div>
+        <p id="uploadStatus" class="hint"></p>
+        <div class="full-table-wrap">
+          <table>
+            <thead id="uploadTableHead"></thead>
+            <tbody id="uploadTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 2. 자금집행 목록 -->
+      <div id="panel-list" class="data-panel" style="display:none">
+        <h2>자금집행 목록</h2>
+        <p class="hint">업로드한 자금집행 요청 목록입니다.</p>
+        <div class="full-table-wrap">
+          <table>
+            <thead id="listTableHead"></thead>
+            <tbody id="listTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 3. 자금집행 결과 -->
+      <div id="panel-result" class="data-panel" style="display:none">
+        <h2>자금집행 결과</h2>
+        <p class="hint">실제 집행(지급)된 결과 내역입니다.</p>
+        <div class="full-table-wrap">
+          <table>
+            <thead id="resultTableHead"></thead>
+            <tbody id="resultTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4. 자금전표 -->
+      <div id="panel-voucher" class="data-panel" style="display:none">
+        <h2>자금전표</h2>
+        <p class="hint">
+          지급 전표를 만듭니다 — (차) 비용/자산 계정 · (대) 보통예금.
+          아직 구글시트에는 반영하지 않고 엑셀 파일로만 내보냅니다.
+        </p>
+        <div class="toolbar" style="margin-bottom:8px;">
+          <span></span>
+          <button class="btn primary" id="voucherExportBtn">엑셀로 다운로드</button>
+        </div>
+        <p id="voucherSummary" class="hint"></p>
+        <div class="full-table-wrap">
+          <table>
+            <thead id="voucherTableHead"></thead>
+            <tbody id="voucherTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="yeollingumae.js?v=2026091600"></script>
+</body>
+</html>

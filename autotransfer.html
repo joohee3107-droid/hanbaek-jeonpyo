@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>자동이체 자동전표</title>
+<link rel="stylesheet" href="style.css?v=2026091511">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>자동이체 자동전표</h1>
+  <p><a href="index.html" style="color:#9ca3af;">← 전표 목록으로</a> · 연결된 법인만 구글시트를 실시간으로 읽어옵니다.</p>
+</header>
+<main>
+  <p class="hint">
+    ※ 자동이체 항목은 구글시트에서 자동으로 가져오지 않습니다. 추가/수정하고 싶은 항목이 있으면 요청해주세요.
+  </p>
+
+  <div id="loading">데이터를 불러오는 중...</div>
+  <div id="app" style="display:none">
+    <div class="layout">
+      <aside class="sidebar">
+        <h2>법인</h2>
+        <div class="company-tabs" id="companyTabs"></div>
+      </aside>
+
+      <div class="content">
+        <div class="toolbar">
+          <span></span>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="yearSelect"></select>
+            <button class="btn primary" id="refreshBtn">새로고침</button>
+          </div>
+        </div>
+
+        <div id="errorBox"></div>
+
+        <div id="statsSection">
+          <div class="sub-tabs" id="themeTabs"></div>
+
+          <div id="panel-summary" class="data-panel" style="display:none">
+            <div class="toolbar" style="margin-bottom: 8px;">
+              <span></span>
+              <select id="summaryMonthSelect"></select>
+            </div>
+            <div class="stat-cards">
+              <div class="stat-card">
+                <div class="label" id="totalLabel">총 지출</div>
+                <div class="value" id="totalValue">0원</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">출금 거래 건수</div>
+                <div class="value" id="countValue">0건</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">미분류 거래</div>
+                <div class="value" id="unmatchedValue">0건</div>
+              </div>
+            </div>
+
+            <h2>월별 지출 추이</h2>
+            <canvas id="monthlyChart" height="80"></canvas>
+
+            <h2>자동이체 항목별 월별 지출</h2>
+            <p class="hint">
+              "미분류"는 통장내역의 출금 거래 중, 자동이체 리스트에 등록된 통장적요 패턴과 일치하는 항목이 없는 거래입니다.
+              아직 등록 안 된 자동이체이거나 일회성 거래일 수 있어요 — 자동이체 리스트 탭에 항목을 추가하면 다음부터 매칭됩니다.
+            </p>
+            <div class="full-table-wrap">
+              <table>
+                <thead id="itemTableHead"></thead>
+                <tbody id="itemTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="panel-bank" class="data-panel" style="display:none">
+            <h2 id="bankListTitle">통장내역</h2>
+            <div class="recurring-form">
+              <input type="file" id="bankFileInput" accept=".xlsx,.xls,.csv">
+              <button class="btn secondary" id="bankResetBtn">전체 삭제</button>
+            </div>
+            <p class="hint">새 파일을 올리면 겹치는 날짜는 자동으로 걸러내고, 그 이후 날짜만 이어붙여요. 처음부터 다시 시작하려면 "전체 삭제"를 눌러주세요.</p>
+            <div class="toolbar" style="margin-bottom: 8px;">
+              <span></span>
+              <select id="bankMonthSelect"></select>
+            </div>
+            <div class="full-table-wrap">
+              <table>
+                <thead id="bankTableHead"></thead>
+                <tbody id="bankTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="panel-recurring" class="data-panel" style="display:none">
+            <h2 id="recurringListTitle">자동이체 리스트</h2>
+            <div class="recurring-form">
+              <input type="text" id="rfVendor" placeholder="거래처명 *">
+              <input type="text" id="rfVendorCode" placeholder="거래처코드">
+              <input type="text" id="rfPattern" placeholder="통장적요">
+              <input type="text" id="rfAmount" placeholder="금액">
+              <input type="text" id="rfCostAccount" placeholder="차변 계정과목">
+              <input type="text" id="rfCostAccountCode" placeholder="차변 계정과목 코드">
+              <input type="text" id="rfDueDate" placeholder="납부일">
+              <input type="text" id="rfUser" placeholder="사용자">
+              <input type="text" id="rfCreditAccount" placeholder="대변계정과목">
+              <input type="text" id="rfCreditAccountCode" placeholder="대변계정과목코드">
+              <input type="text" id="rfBankName" placeholder="출금은행">
+              <input type="text" id="rfBankAccount" placeholder="출금통장">
+              <button class="btn primary" id="rfAddBtn">추가</button>
+              <button class="btn secondary" id="rfCancelBtn" style="display:none">취소</button>
+            </div>
+            <div class="full-table-wrap">
+              <table>
+                <thead id="recurringTableHead"></thead>
+                <tbody id="recurringTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="panel-voucher" class="data-panel" style="display:none">
+            <h2>자동전표</h2>
+            <p class="hint">
+              통장내역 출금 거래를 자동이체 리스트와 매칭해서 전표를 만듭니다. 돈이 나가면 나간 이유(자동이체 리스트의 차변 계정과목)가 차변, 보통예금(대변 계정과목)이 대변입니다.
+              아직 구글시트에는 반영하지 않고 엑셀 파일로만 내보냅니다.
+            </p>
+            <div class="toolbar" style="margin-bottom: 8px;">
+              <select id="voucherMonthSelect"></select>
+              <button class="btn primary" id="voucherExportBtn">엑셀로 다운로드</button>
+            </div>
+            <p id="voucherSummary"></p>
+            <div class="full-table-wrap">
+              <table>
+                <thead id="voucherTableHead"></thead>
+                <tbody id="voucherTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="autotransfer.js?v=2026091514"></script>
+</body>
+</html>
