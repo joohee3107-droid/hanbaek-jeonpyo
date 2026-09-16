@@ -1238,3 +1238,62 @@ function initAutoTransferModule() {
 }
 
 initAutoTransferModule();
+
+// ===== 데이터 백업 / 복원 (다른 주소로 데이터 옮기기) =====
+// 이 브라우저(localStorage)에 저장된 자동전표 데이터를 파일로 내려받거나(백업),
+// 파일에서 되돌릴 수 있다(복원). PC파일(file://)과 인터넷(https) 주소는 저장공간이
+// 서로 달라서, 백업 파일로 데이터를 옮길 때 쓴다.
+(function () {
+  function exportBackup() {
+    var data = {};
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      data[k] = localStorage.getItem(k);
+    }
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '자동전표_백업_' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+  function importBackup(file) {
+    var r = new FileReader();
+    r.onload = function (e) {
+      try {
+        var data = JSON.parse(e.target.result);
+        var n = 0;
+        for (var k in data) { localStorage.setItem(k, data[k]); n++; }
+        alert(n + '개 항목을 복원했어요. 화면을 새로고침합니다.');
+        location.reload();
+      } catch (err) {
+        alert('복원 실패: 올바른 백업 파일인지 확인해주세요.\n' + err.message);
+      }
+    };
+    r.readAsText(file);
+  }
+  function mount() {
+    if (document.getElementById('backupBar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'backupBar';
+    bar.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:13px;';
+    bar.innerHTML = '<b>데이터 백업/복원</b>' +
+      '<button class="btn secondary" id="backupExportBtn" type="button">백업 내려받기</button>' +
+      '<label class="btn secondary" style="margin:0;cursor:pointer;">복원(파일 열기)<input type="file" id="backupImportInput" accept=".json" style="display:none"></label>' +
+      '<span style="color:#4338ca;">PC파일 ↔ 인터넷 주소로 데이터를 옮길 때 사용해요.</span>';
+    var main = document.querySelector('main');
+    if (main) main.insertBefore(bar, main.firstChild);
+    else document.body.insertBefore(bar, document.body.firstChild);
+    document.getElementById('backupExportBtn').onclick = exportBackup;
+    document.getElementById('backupImportInput').onchange = function (e) {
+      var f = e.target.files[0];
+      if (f) importBackup(f);
+      e.target.value = '';
+    };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+})();
