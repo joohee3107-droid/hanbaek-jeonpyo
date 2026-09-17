@@ -253,6 +253,55 @@ let state = {
   bankFile: loadBankFile(),
 };
 
+// ── 표 검색 / 정렬 / 계정과목 필터 (사용자 요청 기능) ──────────────────────────
+// 세 표(자동이체 리스트·통장내역·자동전표)에 공통으로 쓰는 검색어/정렬/계정과목 필터 상태.
+state.tf = {
+  recurring: { q: '', sortKey: null, dir: 1, account: 'all' },
+  bank: { q: '', sortIdx: null, dir: 1 },
+  voucher: { q: '', sortIdx: null, dir: 1, account: 'all' },
+};
+// 여러 칸(cells) 중 하나라도 검색어를 포함하면 통과 (대소문자 무시)
+function tfMatch(cells, q) {
+  if (!q) return true;
+  const qq = q.toLowerCase();
+  return cells.some((c) => String(c == null ? '' : c).toLowerCase().includes(qq));
+}
+// 숫자처럼 보이면 숫자로, 아니면 한글 가나다 순으로 비교
+function tfCompare(a, b) {
+  const sa = String(a == null ? '' : a).trim(), sb = String(b == null ? '' : b).trim();
+  const na = parseFloat(sa.replace(/[,\s원]/g, '')), nb = parseFloat(sb.replace(/[,\s원]/g, ''));
+  const aNum = sa !== '' && !isNaN(na), bNum = sb !== '' && !isNaN(nb);
+  if (aNum && bNum) return na - nb;
+  return sa.localeCompare(sb, 'ko');
+}
+// 정렬 표시 화살표 (오름차순 ▲ / 내림차순 ▼)
+function tfArrow(active, dir) { return active ? (dir > 0 ? ' ▲' : ' ▼') : ''; }
+// 헤더 클릭 시 정렬 방향 토글: 같은 열을 다시 누르면 반대 방향, 다른 열이면 오름차순부터
+function tfToggleSort(cur, key) {
+  if (cur.sortKey === key || cur.sortIdx === key) return { key, dir: -(cur.dir || 1) };
+  return { key, dir: 1 };
+}
+// 금액 문자열에 천단위 콤마 (빈칸/하이픈/숫자 아님은 그대로 둠)
+function tfCommas(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '' || s === '-') return v;
+  const n = parseFloat(s.replace(/,/g, ''));
+  return isNaN(n) ? v : n.toLocaleString('ko-KR');
+}
+// 여러 값에서 중복 없는 목록을 가나다 순으로 (계정과목 드롭다운 채우기용)
+function tfDistinct(values) {
+  return Array.from(new Set(values.filter((v) => v != null && String(v).trim() !== ''))).sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+}
+// 계정과목 필터 드롭다운의 옵션을 채운다 (현재 선택은 유지)
+function tfFillAccountSelect(selectId, accounts, current) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const opts = ['<option value="all">계정과목 전체</option>'].concat(accounts.map((a) => `<option value="${escapeHtml(a)}"${a === current ? ' selected' : ''}>${escapeHtml(a)}</option>`));
+  sel.innerHTML = opts.join('');
+  sel.value = current || 'all';
+}
+function rerenderRecurring() { renderRecurringList(state.transfers.filter((t) => t.company === state.company)); }
+
 // "확정"을 누른 적요/거래처 선택은 새로고침(구글시트 재조회)해도 유지되어야 하므로 브라우저
 // localStorage에 회사+연도별로 저장해둔다. 통장내역 원본이 아니라 여기 저장된 값이라 이 브라우저를
 // 벗어나면(다른 PC 등) 안 보인다는 한계는 있다.
@@ -506,12 +555,28 @@ const RECURRING_FORM_FIELDS = [
 ];
 
 function renderRecurringList(transfers) {
+  const tf = state.tf.recurring;
   document.getElementById('recurringListTitle').textContent = `자동이체 리스트 - ${state.company}`;
+
+  // 계정과목(차변) 필터 드롭다운 채우기 (회사 전체 항목 기준)
+  tfFillAccountSelect('recurringAccountFilter', tfDistinct(transfers.map((t) => t.costAccount)), tf.account);
+
+  // 검색 + 계정과목 필터
+  let view = transfers.filter((t) => {
+    if (tf.account !== 'all' && (t.costAccount || '') !== tf.account) return false;
+    return tfMatch(RECURRING_LIST_COLUMNS.map((c) => t[c.key]), tf.q);
+  });
+  // 정렬 (헤더 클릭한 열 기준)
+  if (tf.sortKey) view = view.slice().sort((a, b) => tf.dir * tfCompare(a[tf.sortKey], b[tf.sortKey]));
+
   document.getElementById('recurringTableHead').innerHTML =
-    `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th>${c.label}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`;
-  document.getElementById('recurringTableBody').innerHTML = transfers.length
-    ? transfers.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td>${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
-    : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">등록된 자동이체가 없습니다.</td></tr>`;
+    `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`;
+  document.getElementById('recurringTableBody').innerHTML = view.length
+    ? view.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td>${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
+    : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">${transfers.length ? '검색 결과가 없습니다.' : '등록된 자동이체가 없습니다.'}</td></tr>`;
+  document.querySelectorAll('#recurringTableHead .sortable').forEach((th) => {
+    th.onclick = () => { const s = tfToggleSort(tf, th.dataset.key); tf.sortKey = s.key; tf.dir = s.dir; rerenderRecurring(); };
+  });
   document.querySelectorAll('.recurring-delete-btn').forEach((btn) => {
     btn.onclick = () => {
       if (confirm('이 항목을 삭제할까요?')) deleteRecurringItem(btn.dataset.id);
@@ -548,6 +613,14 @@ function bankColClass(label) {
   if (BANK_NARROW_COLS.includes(clean)) return ' class="col-narrow"';
   if (BANK_AMOUNT_COLS.includes(clean)) return ' class="col-amount"';
   if (BANK_MEMO_COLS.includes(clean)) return ' class="col-memo"';
+  return '';
+}
+// 클래스 속성이 아니라 클래스 이름만 (정렬 가능 헤더에서 다른 클래스와 합칠 때 씀)
+function bankColName(label) {
+  const clean = String(label).replace(/\s/g, '');
+  if (BANK_NARROW_COLS.includes(clean)) return 'col-narrow';
+  if (BANK_AMOUNT_COLS.includes(clean)) return 'col-amount';
+  if (BANK_MEMO_COLS.includes(clean)) return 'col-memo';
   return '';
 }
 function formatAmountCell(value) {
@@ -609,31 +682,42 @@ function renderBankList() {
     if (i === dateColIdx) headCells.push('월', '일');
     else headCells.push(h);
   });
-  const filteredRows = data.rows.filter((row) => {
+  const tf = state.tf.bank;
+  const monthRows = data.rows.filter((row) => {
     if (state.bankMonth === 'all' || dateColIdx === -1) return true;
     const parsed = splitMonthDay(row[dateColIdx]);
     return parsed && parsed.month === state.bankMonth;
   });
+  // 날짜열을 월/일 두 칸으로 펼친 표시용 행으로 변환
+  let expanded = monthRows.map((row) => {
+    const cells = [];
+    row.forEach((c, ci) => {
+      if (ci === dateColIdx) {
+        const parsed = splitMonthDay(c);
+        cells.push(parsed ? `${parseInt(parsed.month, 10)}월` : c, parsed ? parsed.day : '');
+      } else {
+        cells.push(c);
+      }
+    });
+    return cells;
+  });
+  // 검색
+  expanded = expanded.filter((cells) => tfMatch(cells, tf.q));
+  // 정렬 (헤더 클릭한 열 기준)
+  if (tf.sortIdx != null) expanded = expanded.slice().sort((a, b) => tf.dir * tfCompare(a[tf.sortIdx], b[tf.sortIdx]));
+
   document.getElementById('bankTableHead').innerHTML =
-    `<tr><th>순번</th>${headCells.map((h) => `<th${bankColClass(h)}>${h || '-'}</th>`).join('')}</tr>`;
-  document.getElementById('bankTableBody').innerHTML = filteredRows.length
-    ? filteredRows.map((row, i) => {
-        const cells = [];
-        row.forEach((c, ci) => {
-          if (ci === dateColIdx) {
-            const parsed = splitMonthDay(c);
-            cells.push(parsed ? `${parseInt(parsed.month, 10)}월` : c, parsed ? parsed.day : '');
-          } else {
-            cells.push(c);
-          }
-        });
-        return `<tr><td>${i + 1}</td>${cells.map((c, ci) => {
+    `<tr><th>순번</th>${headCells.map((h, i) => `<th class="sortable ${bankColName(h)}" data-idx="${i}">${h || '-'}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`;
+  document.getElementById('bankTableBody').innerHTML = expanded.length
+    ? expanded.map((cells, i) => `<tr><td>${i + 1}</td>${cells.map((c, ci) => {
           const label = headCells[ci];
           const value = BANK_AMOUNT_COLS.includes(String(label).replace(/\s/g, '')) ? formatAmountCell(c) : c;
           return `<td${bankColClass(label)}>${value || '-'}</td>`;
-        }).join('')}</tr>`;
-      }).join('')
-    : `<tr><td colspan="${headCells.length + 1}">해당 월에 데이터가 없습니다.</td></tr>`;
+        }).join('')}</tr>`).join('')
+    : `<tr><td colspan="${headCells.length + 1}">${monthRows.length ? '검색 결과가 없습니다.' : '해당 월에 데이터가 없습니다.'}</td></tr>`;
+  document.querySelectorAll('#bankTableHead .sortable').forEach((th) => {
+    th.onclick = () => { const idx = parseInt(th.dataset.idx, 10); const s = tfToggleSort({ sortIdx: tf.sortIdx, dir: tf.dir }, idx); tf.sortIdx = s.key; tf.dir = s.dir; renderBankList(); };
+  });
 }
 
 function escapeHtml(s) {
@@ -645,6 +729,8 @@ const VOUCHER_VENDOR_CODE_COL = 5; // '거래처명' 바로 앞 거래처코드 
 const VOUCHER_VENDOR_COL = VOUCHER_HEADER.indexOf('거래처명');
 const VOUCHER_ACCOUNT_COL = VOUCHER_HEADER.indexOf('계정과목명');
 const VOUCHER_ACCOUNT_CODE_COL = VOUCHER_HEADER.indexOf('계정과목코드');
+const VOUCHER_DEBIT_AMT_COL = VOUCHER_HEADER.indexOf('차변(출금)');
+const VOUCHER_CREDIT_AMT_COL = VOUCHER_HEADER.indexOf('대변(대변)');
 
 // 대변(보통예금) 거래처코드는 자동이체 리스트의 거래처코드(창 옆 필드) 값을 그대로 쓰고,
 // 거래처명만 회사별 고정 계좌명으로 채운다 (자동이체 리스트에는 거래처명 필드가 따로 없어서).
@@ -903,6 +989,8 @@ function liveVoucherCellValue(item, colIndex, isCredit, fallback) {
 }
 
 function renderVoucherCell(entry, colIndex, value, isCredit) {
+  // 차변(출금)/대변(대변) 금액 칸엔 천단위 콤마를 붙인다.
+  if (colIndex === VOUCHER_DEBIT_AMT_COL || colIndex === VOUCHER_CREDIT_AMT_COL) value = tfCommas(value);
   if (entry.unmatched && colIndex === VOUCHER_ACCOUNT_COL) {
     return `<td><span class="badge">미분류</span></td>`;
   }
@@ -962,7 +1050,20 @@ function confirmVoucherEntry(key) {
 }
 
 function displayVoucherRows() {
-  const filtered = filterVoucherEntriesByMonth(state.voucherEntries, state.voucherMonth);
+  const tf = state.tf.voucher;
+  const monthFiltered = filterVoucherEntriesByMonth(state.voucherEntries, state.voucherMonth);
+
+  // 계정과목 필터 드롭다운 채우기 (월 필터 이전 전체 기준)
+  tfFillAccountSelect('voucherAccountFilter', tfDistinct(state.voucherEntries.map((e) => e.debit[VOUCHER_ACCOUNT_COL])), tf.account);
+
+  // 검색 + 계정과목 필터 (차변/대변 두 줄의 값을 모두 훑는다)
+  let filtered = monthFiltered.filter((entry) => {
+    if (tf.account !== 'all' && (entry.debit[VOUCHER_ACCOUNT_COL] || '') !== tf.account) return false;
+    return tfMatch(entry.debit.concat(entry.credit), tf.q);
+  });
+  // 정렬 (헤더 클릭한 열 기준, 차변 행 값으로 정렬하되 차변/대변 쌍은 함께 움직인다)
+  if (tf.sortIdx != null) filtered = filtered.slice().sort((a, b) => tf.dir * tfCompare(a.debit[tf.sortIdx], b.debit[tf.sortIdx]));
+
   const monthLabel = state.voucherMonth === 'all' ? '전체' : `${parseInt(state.voucherMonth, 10)}월`;
   const reconciled = state.voucherEntries.length === state.voucherTotalCount;
   const checkBadge = reconciled
@@ -971,16 +1072,19 @@ function displayVoucherRows() {
   const unmatchedCount = state.voucherTotalCount - state.voucherMatchedCount;
   const yearLabel = state.year ? `${state.year}년 ` : '';
   document.getElementById('voucherSummary').innerHTML =
-    `${state.company} ${yearLabel}${monthLabel} - 통장내역 출금 ${state.voucherTotalCount}건 중 ${state.voucherMatchedCount}건 매칭 / ${unmatchedCount}건 미분류, 전표 ${state.voucherEntries.length * 2}행(${state.voucherEntries.length}건) 생성, 지금 ${filtered.length * 2}행 표시 중 ${checkBadge} (아직 구글시트에는 반영하지 않은 미리보기입니다)`;
+    `${state.company} ${yearLabel}${monthLabel} - 통장내역 출금 ${state.voucherTotalCount}건 중 ${state.voucherMatchedCount}건 매칭 / ${unmatchedCount}건 미분류, 전표 ${state.voucherEntries.length * 2}행(${state.voucherEntries.length}건) 생성, 지금 ${filtered.length}건 표시 중 ${checkBadge} (아직 구글시트에는 반영하지 않은 미리보기입니다)`;
   document.getElementById('voucherTableHead').innerHTML =
-    `<tr>${VOUCHER_HEADER.map((h) => `<th>${h}</th>`).join('')}</tr>`;
+    `<tr>${VOUCHER_HEADER.map((h, i) => `<th class="sortable" data-idx="${i}">${h}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`;
   document.getElementById('voucherTableBody').innerHTML = filtered.length
     ? filtered.map((entry) => `
         <tr>${entry.debit.map((v, i) => renderVoucherCell(entry, i, v, false)).join('')}</tr>
         <tr>${entry.credit.map((v, i) => renderVoucherCell(entry, i, v, true)).join('')}</tr>
       `).join('')
-    : `<tr><td colspan="${VOUCHER_HEADER.length}">해당 월에 생성된 전표가 없습니다.</td></tr>`;
+    : `<tr><td colspan="${VOUCHER_HEADER.length}">${monthFiltered.length ? '검색 결과가 없습니다.' : '해당 월에 생성된 전표가 없습니다.'}</td></tr>`;
 
+  document.querySelectorAll('#voucherTableHead .sortable').forEach((th) => {
+    th.onclick = () => { const idx = parseInt(th.dataset.idx, 10); const s = tfToggleSort({ sortIdx: tf.sortIdx, dir: tf.dir }, idx); tf.sortIdx = s.key; tf.dir = s.dir; displayVoucherRows(); };
+  });
   document.querySelectorAll('.voucher-vendor-select').forEach((sel) => {
     sel.onchange = (e) => {
       state.voucherVendorSelections[e.target.dataset.key] = e.target.value;
@@ -1269,6 +1373,13 @@ function initAutoTransferModule() {
     state.bankMonth = e.target.value;
     renderBankList();
   };
+
+  // 표 검색 / 계정과목 필터 입력 연결
+  document.getElementById('recurringSearch').oninput = (e) => { state.tf.recurring.q = e.target.value; rerenderRecurring(); };
+  document.getElementById('recurringAccountFilter').onchange = (e) => { state.tf.recurring.account = e.target.value; rerenderRecurring(); };
+  document.getElementById('bankSearch').oninput = (e) => { state.tf.bank.q = e.target.value; renderBankList(); };
+  document.getElementById('voucherSearch').oninput = (e) => { state.tf.voucher.q = e.target.value; displayVoucherRows(); };
+  document.getElementById('voucherAccountFilter').onchange = (e) => { state.tf.voucher.account = e.target.value; displayVoucherRows(); };
 
   document.getElementById('bankFileInput').onchange = (e) => {
     const file = e.target.files[0];

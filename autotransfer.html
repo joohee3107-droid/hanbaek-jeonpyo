@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <title>자동이체 자동전표</title>
 <link rel="stylesheet" href="style.css?v=2026091511">
+<style>
+  /* 표 검색 / 정렬 / 필터 UI */
+  .table-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+  .table-search { padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; min-width: 220px; }
+  .table-filter { padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { background: #e5edff; }
+</style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -86,6 +94,10 @@
               <span></span>
               <select id="bankMonthSelect"></select>
             </div>
+            <div class="table-tools">
+              <input type="text" id="bankSearch" class="table-search" placeholder="🔍 검색 (적요·금액 등)">
+              <span class="hint">열 제목을 클릭하면 정렬돼요.</span>
+            </div>
             <div class="full-table-wrap">
               <table>
                 <thead id="bankTableHead"></thead>
@@ -112,6 +124,11 @@
               <button class="btn primary" id="rfAddBtn">추가</button>
               <button class="btn secondary" id="rfCancelBtn" style="display:none">취소</button>
             </div>
+            <div class="table-tools">
+              <input type="text" id="recurringSearch" class="table-search" placeholder="🔍 검색 (거래처·적요 등)">
+              <select id="recurringAccountFilter" class="table-filter"></select>
+              <span class="hint">열 제목을 클릭하면 정렬돼요.</span>
+            </div>
             <div class="full-table-wrap">
               <table>
                 <thead id="recurringTableHead"></thead>
@@ -130,6 +147,11 @@
               <select id="voucherMonthSelect"></select>
               <button class="btn primary" id="voucherExportBtn">엑셀로 다운로드</button>
             </div>
+            <div class="table-tools">
+              <input type="text" id="voucherSearch" class="table-search" placeholder="🔍 검색 (적요·거래처·금액 등)">
+              <select id="voucherAccountFilter" class="table-filter"></select>
+              <span class="hint">열 제목을 클릭하면 정렬돼요.</span>
+            </div>
             <p id="voucherSummary"></p>
             <div class="full-table-wrap">
               <table>
@@ -145,6 +167,6 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="autotransfer.js?v=2026091702"></script>
+<script src="autotransfer.js?v=2026091703"></script>
 </body>
 </html>
