@@ -253,14 +253,46 @@ let state = {
   bankFile: loadBankFile(),
 };
 
-// ── 표 검색 / 정렬 / 계정과목 필터 (사용자 요청 기능) ──────────────────────────
-// 세 표(자동이체 리스트·통장내역·자동전표)에 공통으로 쓰는 검색어/정렬/계정과목 필터 상태.
+// ── 표 열별 필터 / 정렬 (엑셀식: 각 열 아래 칸에 입력해 그 열로 거르기, 헤더 클릭 정렬) ──
+// 세 표(자동이체 리스트·통장내역·자동전표)에 공통으로 쓰는 상태.
+// col = { 열번호: '입력한 필터 글자' }
 state.tf = {
-  recurring: { q: '', sortKey: null, dir: 1, account: 'all' },
-  bank: { q: '', sortIdx: null, dir: 1 },
-  voucher: { q: '', sortIdx: null, dir: 1, account: 'all' },
+  recurring: { col: {}, sortKey: null, dir: 1 },
+  bank: { col: {}, sortIdx: null, dir: 1 },
+  voucher: { col: {}, sortIdx: null, dir: 1 },
 };
-// 여러 칸(cells) 중 하나라도 검색어를 포함하면 통과 (대소문자 무시)
+// 열별 필터 통과 여부: 필터가 걸린 모든 열에 대해, 그 열 값이 입력 글자를 포함해야 통과(AND, 대소문자 무시)
+function tfColMatch(getCell, colState) {
+  for (const idx in colState) {
+    const q = colState[idx];
+    if (!q) continue;
+    const v = getCell(idx);
+    if (!String(v == null ? '' : v).toLowerCase().includes(String(q).toLowerCase())) return false;
+  }
+  return true;
+}
+// 헤더 아래 "필터 입력 행"의 HTML을 만든다. lead/trail은 순번·수정·삭제 같은 필터 없는 앞뒤 칸 수.
+function tfFilterRowHtml(colCount, colState, lead, trail) {
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<th></th>');
+  for (let i = 0; i < colCount; i++) cells.push(`<th><input type="text" class="col-filter" data-col="${i}" value="${escapeHtml(colState[i] || '')}" title="이 열 검색"></th>`);
+  for (let i = 0; i < trail; i++) cells.push('<th></th>');
+  return `<tr class="table-filter-row">${cells.join('')}</tr>`;
+}
+// 필터 입력칸에 타이핑하면 그 표만 다시 그리되, 방금 치던 칸에 커서를 되돌려 포커스가 유지되게 한다.
+function tfWireFilterRow(headId, colState, rerender) {
+  document.querySelectorAll(`#${headId} .col-filter`).forEach((inp) => {
+    inp.oninput = (e) => {
+      const idx = e.target.dataset.col;
+      colState[idx] = e.target.value;
+      const pos = e.target.selectionStart;
+      rerender();
+      const again = document.querySelector(`#${headId} .col-filter[data-col="${idx}"]`);
+      if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (err) {} }
+    };
+  });
+}
+// (이전 검색창 방식에서 쓰던 헬퍼 — 다른 곳에서 참조할 수 있어 남겨둠)
 function tfMatch(cells, q) {
   if (!q) return true;
   const qq = q.toLowerCase();
@@ -558,25 +590,21 @@ function renderRecurringList(transfers) {
   const tf = state.tf.recurring;
   document.getElementById('recurringListTitle').textContent = `자동이체 리스트 - ${state.company}`;
 
-  // 계정과목(차변) 필터 드롭다운 채우기 (회사 전체 항목 기준)
-  tfFillAccountSelect('recurringAccountFilter', tfDistinct(transfers.map((t) => t.costAccount)), tf.account);
-
-  // 검색 + 계정과목 필터
-  let view = transfers.filter((t) => {
-    if (tf.account !== 'all' && (t.costAccount || '') !== tf.account) return false;
-    return tfMatch(RECURRING_LIST_COLUMNS.map((c) => t[c.key]), tf.q);
-  });
+  // 열별 필터
+  let view = transfers.filter((t) => tfColMatch((idx) => t[RECURRING_LIST_COLUMNS[idx].key], tf.col));
   // 정렬 (헤더 클릭한 열 기준)
   if (tf.sortKey) view = view.slice().sort((a, b) => tf.dir * tfCompare(a[tf.sortKey], b[tf.sortKey]));
 
   document.getElementById('recurringTableHead').innerHTML =
-    `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`;
+    `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`
+    + tfFilterRowHtml(RECURRING_LIST_COLUMNS.length, tf.col, 1, 2);
   document.getElementById('recurringTableBody').innerHTML = view.length
     ? view.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td>${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
-    : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">${transfers.length ? '검색 결과가 없습니다.' : '등록된 자동이체가 없습니다.'}</td></tr>`;
+    : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">${transfers.length ? '필터 결과가 없습니다.' : '등록된 자동이체가 없습니다.'}</td></tr>`;
   document.querySelectorAll('#recurringTableHead .sortable').forEach((th) => {
     th.onclick = () => { const s = tfToggleSort(tf, th.dataset.key); tf.sortKey = s.key; tf.dir = s.dir; rerenderRecurring(); };
   });
+  tfWireFilterRow('recurringTableHead', tf.col, rerenderRecurring);
   document.querySelectorAll('.recurring-delete-btn').forEach((btn) => {
     btn.onclick = () => {
       if (confirm('이 항목을 삭제할까요?')) deleteRecurringItem(btn.dataset.id);
@@ -701,23 +729,25 @@ function renderBankList() {
     });
     return cells;
   });
-  // 검색
-  expanded = expanded.filter((cells) => tfMatch(cells, tf.q));
+  // 열별 필터
+  expanded = expanded.filter((cells) => tfColMatch((idx) => cells[idx], tf.col));
   // 정렬 (헤더 클릭한 열 기준)
   if (tf.sortIdx != null) expanded = expanded.slice().sort((a, b) => tf.dir * tfCompare(a[tf.sortIdx], b[tf.sortIdx]));
 
   document.getElementById('bankTableHead').innerHTML =
-    `<tr><th>순번</th>${headCells.map((h, i) => `<th class="sortable ${bankColName(h)}" data-idx="${i}">${h || '-'}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`;
+    `<tr><th>순번</th>${headCells.map((h, i) => `<th class="sortable ${bankColName(h)}" data-idx="${i}">${h || '-'}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`
+    + tfFilterRowHtml(headCells.length, tf.col, 1, 0);
   document.getElementById('bankTableBody').innerHTML = expanded.length
     ? expanded.map((cells, i) => `<tr><td>${i + 1}</td>${cells.map((c, ci) => {
           const label = headCells[ci];
           const value = BANK_AMOUNT_COLS.includes(String(label).replace(/\s/g, '')) ? formatAmountCell(c) : c;
           return `<td${bankColClass(label)}>${value || '-'}</td>`;
         }).join('')}</tr>`).join('')
-    : `<tr><td colspan="${headCells.length + 1}">${monthRows.length ? '검색 결과가 없습니다.' : '해당 월에 데이터가 없습니다.'}</td></tr>`;
+    : `<tr><td colspan="${headCells.length + 1}">${monthRows.length ? '필터 결과가 없습니다.' : '해당 월에 데이터가 없습니다.'}</td></tr>`;
   document.querySelectorAll('#bankTableHead .sortable').forEach((th) => {
     th.onclick = () => { const idx = parseInt(th.dataset.idx, 10); const s = tfToggleSort({ sortIdx: tf.sortIdx, dir: tf.dir }, idx); tf.sortIdx = s.key; tf.dir = s.dir; renderBankList(); };
   });
+  tfWireFilterRow('bankTableHead', tf.col, renderBankList);
 }
 
 function escapeHtml(s) {
@@ -1053,14 +1083,8 @@ function displayVoucherRows() {
   const tf = state.tf.voucher;
   const monthFiltered = filterVoucherEntriesByMonth(state.voucherEntries, state.voucherMonth);
 
-  // 계정과목 필터 드롭다운 채우기 (월 필터 이전 전체 기준)
-  tfFillAccountSelect('voucherAccountFilter', tfDistinct(state.voucherEntries.map((e) => e.debit[VOUCHER_ACCOUNT_COL])), tf.account);
-
-  // 검색 + 계정과목 필터 (차변/대변 두 줄의 값을 모두 훑는다)
-  let filtered = monthFiltered.filter((entry) => {
-    if (tf.account !== 'all' && (entry.debit[VOUCHER_ACCOUNT_COL] || '') !== tf.account) return false;
-    return tfMatch(entry.debit.concat(entry.credit), tf.q);
-  });
+  // 열별 필터 (차변/대변 두 줄의 같은 열 값을 함께 훑어서, 둘 중 하나라도 걸리면 통과)
+  let filtered = monthFiltered.filter((entry) => tfColMatch((idx) => `${entry.debit[idx]} ${entry.credit[idx]}`, tf.col));
   // 정렬 (헤더 클릭한 열 기준, 차변 행 값으로 정렬하되 차변/대변 쌍은 함께 움직인다)
   if (tf.sortIdx != null) filtered = filtered.slice().sort((a, b) => tf.dir * tfCompare(a.debit[tf.sortIdx], b.debit[tf.sortIdx]));
 
@@ -1074,17 +1098,19 @@ function displayVoucherRows() {
   document.getElementById('voucherSummary').innerHTML =
     `${state.company} ${yearLabel}${monthLabel} - 통장내역 출금 ${state.voucherTotalCount}건 중 ${state.voucherMatchedCount}건 매칭 / ${unmatchedCount}건 미분류, 전표 ${state.voucherEntries.length * 2}행(${state.voucherEntries.length}건) 생성, 지금 ${filtered.length}건 표시 중 ${checkBadge} (아직 구글시트에는 반영하지 않은 미리보기입니다)`;
   document.getElementById('voucherTableHead').innerHTML =
-    `<tr>${VOUCHER_HEADER.map((h, i) => `<th class="sortable" data-idx="${i}">${h}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`;
+    `<tr>${VOUCHER_HEADER.map((h, i) => `<th class="sortable" data-idx="${i}">${h}${tfArrow(tf.sortIdx === i, tf.dir)}</th>`).join('')}</tr>`
+    + tfFilterRowHtml(VOUCHER_HEADER.length, tf.col, 0, 0);
   document.getElementById('voucherTableBody').innerHTML = filtered.length
     ? filtered.map((entry) => `
         <tr>${entry.debit.map((v, i) => renderVoucherCell(entry, i, v, false)).join('')}</tr>
         <tr>${entry.credit.map((v, i) => renderVoucherCell(entry, i, v, true)).join('')}</tr>
       `).join('')
-    : `<tr><td colspan="${VOUCHER_HEADER.length}">${monthFiltered.length ? '검색 결과가 없습니다.' : '해당 월에 생성된 전표가 없습니다.'}</td></tr>`;
+    : `<tr><td colspan="${VOUCHER_HEADER.length}">${monthFiltered.length ? '필터 결과가 없습니다.' : '해당 월에 생성된 전표가 없습니다.'}</td></tr>`;
 
   document.querySelectorAll('#voucherTableHead .sortable').forEach((th) => {
     th.onclick = () => { const idx = parseInt(th.dataset.idx, 10); const s = tfToggleSort({ sortIdx: tf.sortIdx, dir: tf.dir }, idx); tf.sortIdx = s.key; tf.dir = s.dir; displayVoucherRows(); };
   });
+  tfWireFilterRow('voucherTableHead', tf.col, displayVoucherRows);
   document.querySelectorAll('.voucher-vendor-select').forEach((sel) => {
     sel.onchange = (e) => {
       state.voucherVendorSelections[e.target.dataset.key] = e.target.value;
@@ -1373,13 +1399,6 @@ function initAutoTransferModule() {
     state.bankMonth = e.target.value;
     renderBankList();
   };
-
-  // 표 검색 / 계정과목 필터 입력 연결
-  document.getElementById('recurringSearch').oninput = (e) => { state.tf.recurring.q = e.target.value; rerenderRecurring(); };
-  document.getElementById('recurringAccountFilter').onchange = (e) => { state.tf.recurring.account = e.target.value; rerenderRecurring(); };
-  document.getElementById('bankSearch').oninput = (e) => { state.tf.bank.q = e.target.value; renderBankList(); };
-  document.getElementById('voucherSearch').oninput = (e) => { state.tf.voucher.q = e.target.value; displayVoucherRows(); };
-  document.getElementById('voucherAccountFilter').onchange = (e) => { state.tf.voucher.account = e.target.value; displayVoucherRows(); };
 
   document.getElementById('bankFileInput').onchange = (e) => {
     const file = e.target.files[0];
