@@ -1212,6 +1212,25 @@ function flattenVoucherEntries(entries) {
   return rows;
 }
 
+// ERP(전표 엑셀 업로드) 양식과 똑같이 내보낸다 — "자동이체 자동전표 양식" 파일 기준.
+// 칸: 순번, 월, 일, 구분, CODE(계정), 계정과목, CODE(거래처), 거래처, 적요, 차변, 대변, CODE, 현장, 필터
+// - 순번/월/일/구분/코드/금액은 숫자로 넣는다 (금액을 글자로 넣으면 ERP가 0으로 읽어 "금액항목은 0이 될 수 없습니다" 오류)
+// - 반대편 금액칸은 0이 아니라 빈칸, 금액 서식은 #,##0, 필터 칸은 "보임"
+const ERP_EXPORT_HEADER = ['순번', '월', '일', '구분', 'CODE', '계정과목', 'CODE', '거래처', '적요', '차변', '대변', 'CODE', '현장', '필터'];
+const ERP_MEMO_MAX = 50; // 적요 최대 글자 수 (양식에서 실제로 업로드된 가장 긴 적요가 50자)
+// 적요를 ERP 양식 스타일로 정리: 앞의 "자동이체/" 빼기, "/" 앞뒤 공백 없애기, 빈 칸("/ /") 빼기, 50자에서 자르기
+function erpMemo(memo) {
+  const parts = String(memo == null ? '' : memo).split('/').map((x) => x.trim()).filter(Boolean);
+  if (parts.length > 1 && /^자[동도]이체$/.test(parts[0])) parts.shift();
+  return parts.join('/').slice(0, ERP_MEMO_MAX).trim();
+}
+// "000321"·"25100"처럼 숫자로만 된 값은 숫자로, 아니면(예: "확인필요") 글자 그대로
+function erpNum(v) {
+  const t = String(v == null ? '' : v).replace(/,/g, '').trim();
+  if (t === '') return null;
+  return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : String(v).trim();
+}
+
 function exportVoucherExcel() {
   const filtered = filterVoucherEntriesByMonth(state.voucherEntries, state.voucherMonth);
   if (!filtered.length) {
@@ -1219,9 +1238,39 @@ function exportVoucherExcel() {
     return;
   }
   const rows = flattenVoucherEntries(filtered);
-  const ws = XLSX.utils.aoa_to_sheet([VOUCHER_HEADER, ...rows]);
+  const C = (name) => VOUCHER_HEADER.indexOf(name);
+  const aoa = [ERP_EXPORT_HEADER];
+  rows.forEach((r, i) => {
+    const debit = erpNum(r[C('차변(출금)')]);
+    const credit = erpNum(r[C('대변(대변)')]);
+    aoa.push([
+      i + 1,
+      erpNum(r[C('월')]),
+      erpNum(r[C('일')]),
+      erpNum(r[C('구분')]),
+      erpNum(r[C('계정과목코드')]),
+      r[C('계정과목명')] || null,
+      erpNum(r[C('거래처코드')]),
+      r[C('거래처명')] || null,
+      erpMemo(r[C('적요명')]) || null,
+      debit || null,
+      credit || null,
+      null,
+      null,
+      '보임',
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // 금액(차변 J, 대변 K) 칸은 천단위 콤마 서식
+  for (let rr = 1; rr < aoa.length; rr++) {
+    for (const col of ['J', 'K']) {
+      const cell = ws[`${col}${rr + 1}`];
+      if (cell && cell.t === 'n') cell.z = '#,##0';
+    }
+  }
+  ws['!cols'] = ERP_EXPORT_HEADER.map((h, k) => (k === 8 ? { wch: 37 } : {}));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '자동전표');
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
   const monthLabel = state.voucherMonth === 'all' ? '전체' : `${parseInt(state.voucherMonth, 10)}월`;
   XLSX.writeFile(wb, `자동전표_${state.company}_${state.year}년_${monthLabel}.xlsx`);
 }
@@ -1515,7 +1564,8 @@ function initAutoTransferModule() {
       bankName: document.getElementById('rfBankName').value.trim(),
       bankAccount: document.getElementById('rfBankAccount').value.trim(),
       voucherMemo: document.getElementById('rfVoucherMemo').value.trim(),
-      creditVendorCode: '98007', // 대변(보통예금) 거래처코드는 고정값이라 폼에서 입력받지 않는다
+      // 대변(보통예금) 거래처코드는 회사별 고정값이라 폼에서 입력받지 않는다 (한백 농협2(000484)=98001, 한백이엔씨 농협자동이체(4356-01)=98007)
+      creditVendorCode: state.company === '한백' ? '98001' : '98007',
     };
     if (state.recurringEditingId) {
       delete values.creditVendorCode; // 수정할 때는 기존 대변 거래처코드(98001/98007)를 그대로 둔다
