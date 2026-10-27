@@ -615,7 +615,7 @@ function renderRecurringList(transfers) {
     `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`
     + tfFilterRowHtml(RECURRING_LIST_COLUMNS.length, tf.col, 1, 2);
   document.getElementById('recurringTableBody').innerHTML = view.length
-    ? view.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td>${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
+    ? view.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td class="rc-cell" data-id="${t.id}" data-key="${c.key}">${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
     : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">${transfers.length ? '필터 결과가 없습니다.' : '등록된 자동이체가 없습니다.'}</td></tr>`;
   document.querySelectorAll('#recurringTableHead .sortable').forEach((th) => {
     th.onclick = () => { const s = tfToggleSort(tf, th.dataset.key); tf.sortKey = s.key; tf.dir = s.dir; rerenderRecurring(); };
@@ -629,6 +629,42 @@ function renderRecurringList(transfers) {
   document.querySelectorAll('.recurring-edit-btn').forEach((btn) => {
     btn.onclick = () => startEditRecurringItem(btn.dataset.id);
   });
+  // 표의 칸을 더블클릭하면 그 자리에서 바로 고친다 (Enter 또는 다른 곳 클릭 = 저장, Esc = 취소)
+  document.querySelectorAll('#recurringTableBody td.rc-cell').forEach((td) => {
+    td.title = '더블클릭하면 바로 수정할 수 있어요';
+    td.style.cursor = 'text';
+    td.ondblclick = () => startInlineEditRecurringCell(td);
+  });
+}
+
+function startInlineEditRecurringCell(td) {
+  if (td.querySelector('input')) return;
+  const id = td.dataset.id;
+  const key = td.dataset.key;
+  const item = state.transfers.find((t) => t.id === id);
+  if (!item) return;
+  const oldVal = item[key] == null ? '' : String(item[key]);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = oldVal;
+  input.style.cssText = 'width:100%;min-width:90px;box-sizing:border-box;';
+  td.textContent = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const newVal = input.value.trim();
+    if (save && newVal !== oldVal) updateRecurringItem(id, { [key]: newVal });
+    else renderRecurringList(state.transfers.filter((t) => t.company === state.company));
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  };
+  input.onblur = () => finish(true);
 }
 
 function startEditRecurringItem(id) {
@@ -639,6 +675,7 @@ function startEditRecurringItem(id) {
   document.getElementById('rfAddBtn').textContent = '수정 완료';
   document.getElementById('rfCancelBtn').style.display = '';
   renderRecurringList(state.transfers.filter((t) => t.company === state.company));
+  document.getElementById('rfVendor').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function cancelEditRecurringItem() {
