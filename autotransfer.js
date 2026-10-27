@@ -242,6 +242,7 @@ let state = {
   chart: null,
   activeView: 'recurring',
   recurringEditingId: null,
+  rowEditId: null,
   voucherMonth: 'all',
   voucherEntries: [],
   voucherVendorSelections: {},
@@ -602,80 +603,96 @@ const RECURRING_FORM_FIELDS = [
   ['rfBankName', 'bankName'], ['rfBankAccount', 'bankAccount'], ['rfVoucherMemo', 'voucherMemo'],
 ];
 
+function rcEsc(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function renderRecurringList(transfers) {
   const tf = state.tf.recurring;
   document.getElementById('recurringListTitle').textContent = `자동이체 리스트 - ${state.company}`;
 
-  // 열별 필터
-  let view = transfers.filter((t) => tfColMatch((idx) => t[RECURRING_LIST_COLUMNS[idx].key], tf.col));
+  let view = transfers.slice();
   // 정렬 (헤더 클릭한 열 기준)
   if (tf.sortKey) view = view.slice().sort((a, b) => tf.dir * tfCompare(a[tf.sortKey], b[tf.sortKey]));
 
+  // 순번 | 수정 | 거래처명 … | 삭제   (열 제목 아래 필터 입력줄은 두지 않는다)
   document.getElementById('recurringTableHead').innerHTML =
-    `<tr><th>순번</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>수정</th><th>삭제</th></tr>`
-    + tfFilterRowHtml(RECURRING_LIST_COLUMNS.length, tf.col, 1, 2);
+    `<tr><th>순번</th><th>수정</th>${RECURRING_LIST_COLUMNS.map((c) => `<th class="sortable" data-key="${c.key}">${c.label}${tfArrow(tf.sortKey === c.key, tf.dir)}</th>`).join('')}<th>삭제</th></tr>`;
+
+  const editId = state.rowEditId;
   document.getElementById('recurringTableBody').innerHTML = view.length
-    ? view.map((t, i) => `<tr${t.id === state.recurringEditingId ? ' class="editing"' : ''}><td>${i + 1}</td>${RECURRING_LIST_COLUMNS.map((c) => `<td class="rc-cell" data-id="${t.id}" data-key="${c.key}">${t[c.key] || '-'}</td>`).join('')}<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${t.id}">수정</button></td><td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${t.id}">삭제</button></td></tr>`).join('')
+    ? view.map((t, i) => {
+        if (t.id === editId) {
+          // 수정 중인 행: 칸마다 입력창 + 완료/취소 버튼
+          return `<tr class="editing" data-id="${rcEsc(t.id)}"><td>${i + 1}</td>`
+            + `<td style="white-space:nowrap;"><button type="button" class="btn small primary rc-done-btn">완료</button> <button type="button" class="btn small secondary rc-cancel-btn">취소</button></td>`
+            + RECURRING_LIST_COLUMNS.map((c) => `<td><input type="text" class="rc-input" data-key="${c.key}" value="${rcEsc(t[c.key])}" style="width:100%;min-width:90px;box-sizing:border-box;"></td>`).join('')
+            + `<td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${rcEsc(t.id)}">삭제</button></td></tr>`;
+        }
+        return `<tr><td>${i + 1}</td>`
+          + `<td><button type="button" class="btn small secondary recurring-edit-btn" data-id="${rcEsc(t.id)}">수정</button></td>`
+          + RECURRING_LIST_COLUMNS.map((c) => `<td>${t[c.key] || '-'}</td>`).join('')
+          + `<td><button type="button" class="btn small secondary recurring-delete-btn" data-id="${rcEsc(t.id)}">삭제</button></td></tr>`;
+      }).join('')
     : `<tr><td colspan="${RECURRING_LIST_COLUMNS.length + 3}">${transfers.length ? '필터 결과가 없습니다.' : '등록된 자동이체가 없습니다.'}</td></tr>`;
+
   document.querySelectorAll('#recurringTableHead .sortable').forEach((th) => {
     th.onclick = () => { const s = tfToggleSort(tf, th.dataset.key); tf.sortKey = s.key; tf.dir = s.dir; rerenderRecurring(); };
   });
-  tfWireFilterRow('recurringTableHead', tf.col, rerenderRecurring);
   document.querySelectorAll('.recurring-delete-btn').forEach((btn) => {
     btn.onclick = () => {
-      if (confirm('이 항목을 삭제할까요?')) deleteRecurringItem(btn.dataset.id);
+      if (confirm('이 항목을 삭제할까요?')) {
+        if (state.rowEditId === btn.dataset.id) state.rowEditId = null;
+        deleteRecurringItem(btn.dataset.id);
+      }
     };
   });
   document.querySelectorAll('.recurring-edit-btn').forEach((btn) => {
-    btn.onclick = () => startEditRecurringItem(btn.dataset.id);
+    btn.onclick = () => startRowEditRecurring(btn.dataset.id);
   });
-  // 표의 칸을 더블클릭하면 그 자리에서 바로 고친다 (Enter 또는 다른 곳 클릭 = 저장, Esc = 취소)
-  document.querySelectorAll('#recurringTableBody td.rc-cell').forEach((td) => {
-    td.title = '더블클릭하면 바로 수정할 수 있어요';
-    td.style.cursor = 'text';
-    td.ondblclick = () => startInlineEditRecurringCell(td);
-  });
+  const doneBtn = document.querySelector('#recurringTableBody .rc-done-btn');
+  if (doneBtn) {
+    doneBtn.onclick = finishRowEditRecurring;
+    document.querySelector('#recurringTableBody .rc-cancel-btn').onclick = cancelRowEditRecurring;
+    document.querySelectorAll('#recurringTableBody .rc-input').forEach((inp) => {
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') finishRowEditRecurring();
+        else if (e.key === 'Escape') cancelRowEditRecurring();
+      };
+    });
+  }
 }
 
-function startInlineEditRecurringCell(td) {
-  if (td.querySelector('input')) return;
-  const id = td.dataset.id;
-  const key = td.dataset.key;
-  const item = state.transfers.find((t) => t.id === id);
-  if (!item) return;
-  const oldVal = item[key] == null ? '' : String(item[key]);
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = oldVal;
-  input.style.cssText = 'width:100%;min-width:90px;box-sizing:border-box;';
-  td.textContent = '';
-  td.appendChild(input);
-  input.focus();
-  input.select();
-  let done = false;
-  const finish = (save) => {
-    if (done) return;
-    done = true;
-    const newVal = input.value.trim();
-    if (save && newVal !== oldVal) updateRecurringItem(id, { [key]: newVal });
-    else renderRecurringList(state.transfers.filter((t) => t.company === state.company));
-  };
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') finish(true);
-    else if (e.key === 'Escape') finish(false);
-  };
-  input.onblur = () => finish(true);
+// 수정 버튼: 그 행을 입력창으로 바꾼다 (한 번에 한 행만)
+function startRowEditRecurring(id) {
+  if (state.rowEditId && state.rowEditId !== id) {
+    alert('지금 수정 중인 행이 있어요. 먼저 그 행의 "완료"(또는 "취소")를 눌러주세요.');
+    return;
+  }
+  state.rowEditId = id;
+  rerenderRecurring();
+  const first = document.querySelector('#recurringTableBody .rc-input');
+  if (first) first.focus();
 }
 
-function startEditRecurringItem(id) {
-  const item = state.transfers.find((t) => t.id === id);
-  if (!item) return;
-  state.recurringEditingId = id;
-  for (const [inputId, key] of RECURRING_FORM_FIELDS) document.getElementById(inputId).value = item[key] || '';
-  document.getElementById('rfAddBtn').textContent = '수정 완료';
-  document.getElementById('rfCancelBtn').style.display = '';
-  renderRecurringList(state.transfers.filter((t) => t.company === state.company));
-  document.getElementById('rfVendor').scrollIntoView({ behavior: 'smooth', block: 'center' });
+// 완료 버튼: 입력한 값으로 확정(저장)한다
+function finishRowEditRecurring() {
+  const id = state.rowEditId;
+  if (!id) return;
+  const values = {};
+  document.querySelectorAll('#recurringTableBody .rc-input').forEach((inp) => { values[inp.dataset.key] = inp.value.trim(); });
+  if (!values.vendor) {
+    alert('거래처명은 꼭 입력해주세요.');
+    return;
+  }
+  state.rowEditId = null;
+  updateRecurringItem(id, values);
+  rerenderRecurring();
+}
+
+function cancelRowEditRecurring() {
+  state.rowEditId = null;
+  rerenderRecurring();
 }
 
 function cancelEditRecurringItem() {
