@@ -1268,7 +1268,9 @@ function exportVoucherExcel() {
       if (cell && cell.t === 'n') cell.z = '#,##0';
     }
   }
-  ws['!cols'] = ERP_EXPORT_HEADER.map((h, k) => (k === 8 ? { wch: 37 } : {}));
+  // 칸 너비는 모든 칸에 명시한다. 너비 없이 빈 칸 설정({})을 쓰면 엑셀이 그 칸을 너비 0(숨김)으로 읽어서 적요만 보인다.
+  const ERP_COL_WIDTHS = [6, 6, 6, 6, 10, 18, 10, 26, 40, 13, 13, 8, 8, 8];
+  ws['!cols'] = ERP_EXPORT_HEADER.map((h, k) => ({ wch: ERP_COL_WIDTHS[k] }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
   const monthLabel = state.voucherMonth === 'all' ? '전체' : `${parseInt(state.voucherMonth, 10)}월`;
